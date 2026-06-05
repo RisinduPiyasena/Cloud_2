@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-06-03T05:44:41.921Z",
+  "target": "http://aerolink-prod-alb-510268457.us-east-1.elb.amazonaws.com:80",
+  "summary": {
+    "totalRequests": 580,
+    "totalErrors": 0,
+    "overallErrorRate": "0.0%"
+  },
+  "results": [
+    {
+      "name": "Health Check (Baseline)",
+      "requests": 200,
+      "concurrency": 20,
+      "avg": 351,
+      "p50": 322,
+      "p95": 646,
+      "p99": 654,
+      "minLat": 296,
+      "maxLat": 806,
+      "errors": 0,
+      "errorRate": "0.0",
+      "throughputRps": 2.8
+    },
+    {
+      "name": "GET Flights (Aurora SQL Read)",
+      "requests": 100,
+      "concurrency": 10,
+      "avg": 357,
+      "p50": 342,
+      "p95": 485,
+      "p99": 517,
+      "minLat": 322,
+      "maxLat": 517,
+      "errors": 0,
+      "errorRate": "0.0",
+      "throughputRps": 2.8
+    },
+    {
+      "name": "POST Book Seat (ACID Transaction)",
+      "requests": 50,
+      "concurrency": 5,
+      "avg": 357,
+      "p50": 334,
+      "p95": 583,
+      "p99": 595,
+      "minLat": 321,
+      "maxLat": 595,
+      "errors": 0,
+      "errorRate": "0.0",
+      "throughputRps": 2.8
+    },
+    {
+      "name": "GET Track Baggage (DynamoDB Read)",
+      "requests": 150,
+      "concurrency": 15,
+      "avg": 404,
+      "p50": 379,
+      "p95": 587,
+      "p99": 639,
+      "minLat": 302,
+      "maxLat": 768,
+      "errors": 0,
+      "errorRate": "0.0",
+      "throughputRps": 2.5
+    },
+    {
+      "name": "POST Check-In (Orchestration)",
+      "requests": 80,
+      "concurrency": 8,
+      "avg": 456,
+      "p50": 448,
+      "p95": 543,
+      "p99": 1019,
+      "minLat": 345,
+      "maxLat": 1019,
+      "errors": 0,
+      "errorRate": "0.0",
+      "throughputRps": 2.2
+    }
+  ]
+}

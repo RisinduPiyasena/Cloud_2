@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AeroLink Cloud Infrastructure - Phase 4: API Gateway & Event-Driven Backbone'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: aerolink-prod
+    Description: Name of the environment
+
+Resources:
+  # ---------------------------------------------------------
+  # Amazon Cognito (User Authentication & Security)
+  # ---------------------------------------------------------
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub ${EnvironmentName}-user-pool
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: aerolink-web-client
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ---------------------------------------------------------
+  # Amazon SNS (Publish/Subscribe Notifications)
+  # ---------------------------------------------------------
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${EnvironmentName}-notifications
+      KmsMasterKeyId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-KmsKeyArn'
+
+  # ---------------------------------------------------------
+  # Amazon SQS (Decoupling Queues)
+  # ---------------------------------------------------------
+  WorkerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${EnvironmentName}-worker-dlq
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  WorkerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${EnvironmentName}-worker-queue
+      KmsMasterKeyId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-KmsKeyArn'
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WorkerDLQ.Arn
+        maxReceiveCount: 3
+
+  # ---------------------------------------------------------
+  # Amazon EventBridge (Real-Time Event Backbone)
+  # ---------------------------------------------------------
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub ${EnvironmentName}-event-bus
+
+  # ---------------------------------------------------------
+  # Amazon API Gateway (Public Gateway)
+  # ---------------------------------------------------------
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${EnvironmentName}-api
+      ProtocolType: HTTP
+      Description: Public API Gateway routing traffic to the Application Load Balancer
+
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Join 
+        - ''
+        - - 'http://'
+          - !ImportValue 
+            'Fn::Sub': '${EnvironmentName}-ALBDNSName'
+          - '/{proxy}'
+      PayloadFormatVersion: '1.0'
+
+  ApiGatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'ANY /{proxy+}'
+      Target: !Join 
+        - '/'
+        - - 'integrations'
+          - !Ref ApiGatewayIntegration
+
+  ApiGatewayStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: prod
+      AutoDeploy: true
+
+Outputs:
+  ApiGatewayEndpoint:
+    Description: URL of the API Gateway
+    Value: !GetAtt ApiGateway.ApiEndpoint
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+  CognitoClientId:
+    Description: Cognito App Client ID
+    Value: !Ref CognitoUserPoolClient

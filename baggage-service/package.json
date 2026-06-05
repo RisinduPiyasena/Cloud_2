@@ -1,0 +1,19 @@
+{
+  "name": "baggage-service",
+  "version": "1.0.0",
+  "description": "AeroLink Baggage Tracking Service – DynamoDB NoSQL Simulation",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest --runInBand --forceExit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1059.0",
+    "@aws-sdk/lib-dynamodb": "^3.1059.0",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

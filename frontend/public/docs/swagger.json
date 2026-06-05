@@ -1,0 +1,226 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AeroLink Flight Booking API",
+    "version": "1.0.0",
+    "description": "API for searching flights, booking seats, tracking baggage, and checking in."
+  },
+  "servers": [
+    {
+      "url": "https://d2dnoz56aodoxl.cloudfront.net",
+      "description": "Production CloudFront server"
+    }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns the health status of the booking service.",
+        "responses": {
+          "200": {
+            "description": "Service is healthy."
+          }
+        }
+      }
+    },
+    "/api/flights": {
+      "get": {
+        "summary": "Retrieve a list of flights",
+        "description": "Retrieve a list of available flights from AeroLink.",
+        "responses": {
+          "200": {
+            "description": "A list of flights."
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a new flight",
+        "description": "Create a new flight in the AeroLink system.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "flightNumber": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "totalSeats": {
+                    "type": "integer"
+                  },
+                  "departureTime": {
+                    "type": "string"
+                  },
+                  "arrivalTime": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Flight added successfully."
+          }
+        }
+      }
+    },
+    "/api/flights/{id}": {
+      "delete": {
+        "summary": "Delete a flight",
+        "description": "Remove a flight by its flight_id.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Flight deleted."
+          }
+        }
+      }
+    },
+    "/api/bookings/flights": {
+      "get": {
+        "summary": "Get flights for booking",
+        "description": "Returns a list of flights available for booking.",
+        "responses": {
+          "200": {
+            "description": "A list of flights."
+          }
+        }
+      }
+    },
+    "/api/bookings/reserve": {
+      "post": {
+        "summary": "Reserve a flight",
+        "description": "Create a new booking for a passenger on a specific flight.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "flightId": {
+                    "type": "string"
+                  },
+                  "passengerName": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "paymentMethod": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Booking confirmed."
+          },
+          "400": {
+            "description": "Missing fields or flight full."
+          },
+          "404": {
+            "description": "Flight not found."
+          }
+        }
+      }
+    },
+    "/api/bookings/all": {
+      "get": {
+        "summary": "Get all bookings",
+        "description": "Retrieve all bookings made in the system.",
+        "responses": {
+          "200": {
+            "description": "A list of bookings."
+          }
+        }
+      }
+    },
+    "/api/bookings/{id}": {
+      "get": {
+        "summary": "Get a specific booking",
+        "description": "Retrieve booking details by booking reference.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking details."
+          },
+          "404": {
+            "description": "Booking not found."
+          }
+        }
+      }
+    },
+    "/api/bookings/flights/{flightId}/status": {
+      "patch": {
+        "summary": "Update flight status",
+        "description": "Update the status of a flight.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flightId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated."
+          }
+        }
+      }
+    }
+  },
+  "components": {},
+  "tags": []
+}

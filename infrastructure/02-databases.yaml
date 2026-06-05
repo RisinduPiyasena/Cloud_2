@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AeroLink Cloud Infrastructure - Phase 2: Databases (Aurora & DynamoDB)'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: aerolink-prod
+    Description: Name of the environment (must match the Network stack)
+  DBMasterUsername:
+    Type: String
+    Default: aerolinkadmin
+    Description: Master username for Aurora PostgreSQL
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for Aurora PostgreSQL (must be at least 8 characters)
+    MinLength: 8
+
+Resources:
+  # ---------------------------------------------------------
+  # DynamoDB - Global Tables (High-speed NoSQL)
+  # ---------------------------------------------------------
+  BaggageTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: AeroLink-Baggage
+      AttributeDefinitions:
+        - AttributeName: tagNumber
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tagNumber
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+      Replicas:
+        - Region: us-east-1
+        - Region: eu-west-1 # Multi-Region Active-Active sync
+
+  FlightOpsTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: AeroLink-FlightOps
+      AttributeDefinitions:
+        - AttributeName: flightId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: flightId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+      Replicas:
+        - Region: us-east-1
+        - Region: eu-west-1 # Multi-Region Active-Active sync
+
+  PaymentsTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: AeroLink-Payments
+      AttributeDefinitions:
+        - AttributeName: transactionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transactionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+      Replicas:
+        - Region: us-east-1
+        - Region: eu-west-1
+
+  # ---------------------------------------------------------
+  # Database Security Group
+  # ---------------------------------------------------------
+  AuroraSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow PostgreSQL access from within the VPC
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 10.0.0.0/16 # Allow traffic only from inside our VPC
+
+  # ---------------------------------------------------------
+  # Aurora DB Subnet Group (Placed in Private Subnets)
+  # ---------------------------------------------------------
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora DB Cluster
+      SubnetIds:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-private-az1-id"
+        - Fn::ImportValue: !Sub "${EnvironmentName}-private-az2-id"
+
+  # ---------------------------------------------------------
+  # RDS PostgreSQL Instance (ACID Compliant, Multi-AZ)
+  # ---------------------------------------------------------
+  PostgresDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      DBName: aerolink
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref AuroraSecurityGroup
+      StorageEncrypted: true
+      KmsKeyId: !ImportValue
+        'Fn::Sub': '${EnvironmentName}-KmsKeyArn'
+      MultiAZ: true
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+
+Outputs:
+  DatabaseEndpoint:
+    Description: PostgreSQL Database Endpoint
+    Value: !GetAtt PostgresDBInstance.Endpoint.Address

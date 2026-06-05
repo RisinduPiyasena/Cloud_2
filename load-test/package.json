@@ -1,0 +1,9 @@
+{
+  "name": "aerolink-load-test",
+  "version": "1.0.0",
+  "description": "AeroLink Performance & Load Testing – Task 6",
+  "main": "run.js",
+  "scripts": {
+    "test": "node run.js"
+  }
+}

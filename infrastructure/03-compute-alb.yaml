@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AeroLink Cloud Infrastructure - Phase 3: Compute (ECS, ECR & ALB)'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: aerolink-prod
+    Description: Name of the environment (must match the Network stack)
+
+Resources:
+  # ---------------------------------------------------------
+  # Elastic Container Registry (ECR) Repositories
+  # ---------------------------------------------------------
+  FlightBookingRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: aerolink/booking-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  PassengerCheckinRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: aerolink/checkin-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  BaggageTrackerRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: aerolink/baggage-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  FlightOpsRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: aerolink/flightops-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # ---------------------------------------------------------
+  # ECS Cluster
+  # ---------------------------------------------------------
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-cluster
+
+  # ---------------------------------------------------------
+  # Security Groups for ALB and ECS
+  # ---------------------------------------------------------
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic from the internet
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ECSTaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic only from the ALB
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 4005
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  # ---------------------------------------------------------
+  # Application Load Balancer (ALB)
+  # ---------------------------------------------------------
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-alb
+      Scheme: internet-facing
+      Subnets:
+        - !ImportValue 
+          'Fn::Sub': '${EnvironmentName}-public-az1-id'
+        - !ImportValue 
+          'Fn::Sub': '${EnvironmentName}-public-az2-id'
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+Outputs:
+  ClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-ECSClusterName
+  ALBDNSName:
+    Description: DNS Name of the ALB
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-ALBDNSName
+  ALBARN:
+    Description: ARN of the ALB
+    Value: !Ref ApplicationLoadBalancer
+    Export:
+      Name: !Sub ${EnvironmentName}-ALBARN
+  ECSTaskSecurityGroup:
+    Description: Security Group for ECS Tasks
+    Value: !Ref ECSTaskSecurityGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-ECSTaskSecurityGroup

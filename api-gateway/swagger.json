@@ -1,0 +1,324 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AeroLink Distributed Platform API",
+    "version": "2.0.0",
+    "description": "AeroLink Airline Systems Platform – Multi-Region Cloud API. Implements RESTful endpoints across 4 microservices: Booking (Aurora SQL), Baggage (DynamoDB NoSQL), Check-In, and Flight Operations. Secured with JWT/OAuth2 and RBAC.",
+    "contact": { "name": "AeroLink Engineering", "email": "api@aerolink.io" },
+    "license": { "name": "MIT" }
+  },
+  "servers": [
+    { "url": "http://localhost:3000", "description": "Local Development Gateway" },
+    { "url": "https://api.aerolink.io", "description": "AWS Production (US-East-1)" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Flight": {
+        "type": "object",
+        "properties": {
+          "flight_id": { "type": "string", "example": "AL-101" },
+          "origin": { "type": "string", "example": "Colombo (CMB)" },
+          "destination": { "type": "string", "example": "London (LHR)" },
+          "available_seats": { "type": "integer", "example": 145 },
+          "total_seats": { "type": "integer", "example": 150 },
+          "departure_time": { "type": "string", "format": "date-time" },
+          "arrival_time": { "type": "string", "format": "date-time" },
+          "price": { "type": "number", "example": 450.00 },
+          "status": { "type": "string", "enum": ["ON_TIME", "DELAYED", "BOARDING", "CANCELLED"] }
+        }
+      },
+      "Booking": {
+        "type": "object",
+        "properties": {
+          "booking_id": { "type": "string", "example": "BK-54321" },
+          "flight_id": { "type": "string", "example": "AL-101" },
+          "passenger_name": { "type": "string", "example": "James Smith" },
+          "seat_number": { "type": "integer", "example": 12 },
+          "booked_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Baggage": {
+        "type": "object",
+        "properties": {
+          "baggage_id": { "type": "string", "example": "BAG-77102" },
+          "passenger": { "type": "string" },
+          "flight_id": { "type": "string" },
+          "status": { "type": "string", "example": "IN_TRANSIT" },
+          "location": { "type": "string", "example": "Dubai (DXB)" },
+          "lastUpdated": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BoardingPass": {
+        "type": "object",
+        "properties": {
+          "checkinId": { "type": "string", "example": "CHK-12345" },
+          "passenger": { "type": "string" },
+          "flightId": { "type": "string" },
+          "seat": { "type": "string", "example": "14A" },
+          "gate": { "type": "string", "example": "B7" },
+          "boardingTime": { "type": "string" },
+          "issuedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  },
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "summary": "Authenticate – obtain JWT token",
+        "description": "Issues a signed JWT valid for 2 hours. Role must be: Passenger, Staff, or Admin.",
+        "tags": ["Authentication"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username"],
+                "properties": {
+                  "username": { "type": "string", "example": "risindu" },
+                  "role": { "type": "string", "enum": ["Passenger", "Staff", "Admin"], "example": "Admin" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "JWT token issued successfully" },
+          "400": { "description": "Missing username" },
+          "429": { "description": "Rate limit exceeded (20 attempts / 15 min)" }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Gateway health check",
+        "tags": ["System"],
+        "responses": { "200": { "description": "Gateway is healthy" } }
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "summary": "System metrics (CloudWatch simulation)",
+        "tags": ["System"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Metrics including request counts, error rate, circuit breaker states" } }
+      }
+    },
+    "/api/events/stream": {
+      "get": {
+        "summary": "SSE real-time event stream",
+        "description": "Server-Sent Events stream. Pass JWT via ?token= query param. Broadcasts SEAT_RESERVED, BAGGAGE_STATUS_UPDATED, PASSENGER_CHECKED_IN, FLIGHT_STATUS_UPDATED events.",
+        "tags": ["System"],
+        "parameters": [{ "name": "token", "in": "query", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "text/event-stream connection established" } }
+      }
+    },
+    "/api/bookings/flights": {
+      "get": {
+        "summary": "List all available flights",
+        "description": "Retrieves relational flight data from Aurora SQL simulation.",
+        "tags": ["Booking Service"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Array of flights",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Flight" } } } } } }
+          }
+        }
+      }
+    },
+    "/api/bookings/reserve": {
+      "post": {
+        "summary": "Reserve a flight seat (ACID transaction)",
+        "description": "Atomically decrements seat count and creates booking record. Emits SEAT_RESERVED event on SSE stream.",
+        "tags": ["Booking Service"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["flightId", "passengerName"],
+                "properties": {
+                  "flightId": { "type": "string", "example": "AL-101" },
+                  "passengerName": { "type": "string", "example": "James Smith" },
+                  "seatClass": { "type": "string", "enum": ["Economy", "Business", "First"], "example": "Economy" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Booking confirmed with assigned seat number" },
+          "400": { "description": "No seats available or missing fields" },
+          "404": { "description": "Flight not found" }
+        }
+      }
+    },
+    "/api/bookings/all": {
+      "get": {
+        "summary": "List all bookings (Staff/Admin)",
+        "tags": ["Booking Service"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "All bookings joined with flight data" } }
+      }
+    },
+    "/api/bookings/{id}": {
+      "get": {
+        "summary": "Get booking by ID",
+        "tags": ["Booking Service"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "example": "BK-54321" }],
+        "responses": {
+          "200": { "description": "Booking details" },
+          "404": { "description": "Booking not found" }
+        }
+      }
+    },
+    "/api/baggage/all": {
+      "get": {
+        "summary": "List all baggage records",
+        "tags": ["Baggage Service"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "All baggage documents from DynamoDB simulation" } }
+      }
+    },
+    "/api/baggage/track/{id}": {
+      "get": {
+        "summary": "Track baggage by tag ID (DynamoDB point read)",
+        "tags": ["Baggage Service"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" }, "example": "BAG-77102" }],
+        "responses": {
+          "200": { "description": "Baggage record found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Baggage" } } } },
+          "404": { "description": "Tag not found in cluster" }
+        }
+      }
+    },
+    "/api/baggage/update": {
+      "post": {
+        "summary": "Update baggage status (Event-driven telemetry)",
+        "description": "Performs a DynamoDB upsert. Emits BAGGAGE_STATUS_UPDATED to SSE stream.",
+        "tags": ["Baggage Service"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["baggageId", "status"],
+                "properties": {
+                  "baggageId": { "type": "string", "example": "BAG-77102" },
+                  "status": { "type": "string", "example": "LOADED_ON_AIRCRAFT" },
+                  "location": { "type": "string", "example": "London (LHR)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Status synchronized" },
+          "400": { "description": "Invalid status value" }
+        }
+      }
+    },
+    "/api/checkin/process": {
+      "post": {
+        "summary": "Process passenger check-in and issue boarding pass",
+        "description": "Orchestrates check-in: validates data, generates boarding pass with seat/gate, creates baggage manifest tokens. Emits PASSENGER_CHECKED_IN event.",
+        "tags": ["Check-In Service"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["passengerName", "flightId"],
+                "properties": {
+                  "passengerName": { "type": "string", "example": "James Smith" },
+                  "flightId": { "type": "string", "example": "AL-101" },
+                  "baggageCount": { "type": "integer", "example": 2 },
+                  "departureTime": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Boarding pass issued", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BoardingPass" } } } },
+          "400": { "description": "Missing required fields" }
+        }
+      }
+    },
+    "/api/checkin/status/{checkinId}": {
+      "get": {
+        "summary": "Get check-in record by ID",
+        "tags": ["Check-In Service"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "checkinId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Check-in record" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/api/flights/schedule": {
+      "get": {
+        "summary": "Get full flight schedule",
+        "tags": ["Flight Operations"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Complete flight schedule with gate assignments and aircraft details" } }
+      }
+    },
+    "/api/flights/pricing": {
+      "get": {
+        "summary": "Dynamic pricing matrix",
+        "description": "Returns real-time pricing based on seat occupancy using tiered multipliers (simulates Lambda pricing engine).",
+        "tags": ["Flight Operations"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Dynamic price per flight with demand tiers" } }
+      }
+    },
+    "/api/flights/update-status": {
+      "post": {
+        "summary": "Update flight status (Staff/Admin only)",
+        "description": "Requires Staff or Admin role. Updates flight status and broadcasts FLIGHT_STATUS_UPDATED via SSE.",
+        "tags": ["Flight Operations"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["flightId", "status"],
+                "properties": {
+                  "flightId": { "type": "string", "example": "AL-101" },
+                  "status": { "type": "string", "enum": ["ON_TIME", "DELAYED", "BOARDING", "DEPARTED", "ARRIVED", "CANCELLED"] },
+                  "gate": { "type": "string", "example": "B14" },
+                  "delayMins": { "type": "integer", "example": 45 },
+                  "delayReason": { "type": "string", "example": "Weather" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Status updated and broadcast" },
+          "403": { "description": "Insufficient role (requires Staff or Admin)" }
+        }
+      }
+    }
+  }
+}

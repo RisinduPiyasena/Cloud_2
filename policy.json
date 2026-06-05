@@ -1,0 +1,22 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "dynamodb:PutItem",
+                "dynamodb:GetItem",
+                "dynamodb:Scan",
+                "dynamodb:Query",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem"
+            ],
+            "Resource": [
+                "arn:aws:dynamodb:us-east-1:016279724595:table/AeroLink-Checkins",
+                "arn:aws:dynamodb:us-east-1:016279724595:table/AeroLink-Baggage",
+                "arn:aws:dynamodb:us-east-1:016279724595:table/AeroLink-FlightOps",
+                "arn:aws:dynamodb:us-east-1:016279724595:table/AeroLink-Payments"
+            ],
+            "Effect": "Allow"
+        }
+    ]
+}

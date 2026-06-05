@@ -1,0 +1,30 @@
+{
+  "name": "aerolink-platform",
+  "version": "1.0.0",
+  "description": "AeroLink Airline Systems Platform – Cloud-Native Microservices",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"AUTH,BOOK,BAG,CHKIN,OPS,GW,UI\" --prefix-colors \"red,cyan,yellow,green,magenta,blue,white\" \"npm run service:auth\" \"npm run service:booking\" \"npm run service:baggage\" \"npm run service:checkin\" \"npm run service:flightops\" \"npm run service:gateway\" \"npm run service:frontend\"",
+    "dev:clean": "powershell -ExecutionPolicy Bypass -File ./scripts/kill-ports.ps1 && npm run dev",
+    "dev:docker": "powershell -ExecutionPolicy Bypass -File ./scripts/start-docker-stack.ps1",
+    "services": "concurrently --names \"AUTH,BOOK,BAG,CHKIN,OPS,GW\" --prefix-colors \"red,cyan,yellow,green,magenta,blue\" \"npm run service:auth\" \"npm run service:booking\" \"npm run service:baggage\" \"npm run service:checkin\" \"npm run service:flightops\" \"npm run service:gateway\"",
+    "service:auth": "node ./auth-service/index.js",
+    "service:booking": "node ./booking-service/index.js",
+    "service:baggage": "node ./baggage-service/index.js",
+    "service:checkin": "node ./checkin-service/index.js",
+    "service:flightops": "node ./flight-ops-service/index.js",
+    "service:gateway": "node ./api-gateway/gateway.js",
+    "service:frontend": "npm run dev --prefix ./frontend",
+    "test": "concurrently --names \"BOOK,BAG,CHKIN\" \"npm test --prefix ./booking-service\" \"npm test --prefix ./baggage-service\" \"npm test --prefix ./checkin-service\"",
+    "test:booking": "npm test --prefix ./booking-service",
+    "test:baggage": "npm test --prefix ./baggage-service",
+    "test:checkin": "npm test --prefix ./checkin-service",
+    "load-test": "node ./load-test/run.js",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1693.0",
+    "concurrently": "^8.2.2"
+  }
+}

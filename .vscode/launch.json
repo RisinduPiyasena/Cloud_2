@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "msedge",
+      "request": "launch",
+      "name": "Launch AeroLink (Docker)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend/src",
+      "preLaunchTask": "Start AeroLink (Docker Stack)"
+    },
+    {
+      "type": "chrome",
+      "request": "launch",
+      "name": "Launch AeroLink (Docker - Chrome)",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend/src",
+      "preLaunchTask": "Start AeroLink (Docker Stack)"
+    }
+  ]
+}

@@ -1,0 +1,636 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AeroLink Cloud Infrastructure - Phase 6: ECS Services & Routing'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: aerolink-prod
+    Description: Name of the environment
+
+Resources:
+  # ---------------------------------------------------------
+  # IAM Role for ECS Task Execution (Allows pulling from ECR)
+  # ---------------------------------------------------------
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ---------------------------------------------------------
+  # IAM Role for ECS Task (Allows accessing DynamoDB)
+  # ---------------------------------------------------------
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Scan
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource: 
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/AeroLink-Checkins
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/AeroLink-Baggage
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/AeroLink-FlightOps
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/AeroLink-Payments
+
+  # ---------------------------------------------------------
+  # Booking Service Target Group & ALB Listener
+  # ---------------------------------------------------------
+  BookingTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-booking-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 3001
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  # ALB Listener
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ALBARN'
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '404'
+            ContentType: text/plain
+            MessageBody: 'Not Found'
+
+  BookingListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/bookings*
+            - /api/flights*
+            - /api/health*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref BookingTargetGroup
+
+  # ---------------------------------------------------------
+  # Booking Service ECS Task Definition
+  # ---------------------------------------------------------
+  BookingTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-booking-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: booking-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/booking-service:latest
+          PortMappings:
+            - ContainerPort: 3001
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-booking
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  BookingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-booking
+      RetentionInDays: 7
+
+  # ---------------------------------------------------------
+  # Booking Service ECS Service
+  # ---------------------------------------------------------
+  BookingService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: booking-service
+      TaskDefinition: !Ref BookingTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: booking-container
+          ContainerPort: 3001
+          TargetGroupArn: !Ref BookingTargetGroup
+
+  # =========================================================
+  # Check-in Service Resources
+  # =========================================================
+  
+  CheckinTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-checkin-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 3003
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  CheckinListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 20
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/checkin*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref CheckinTargetGroup
+
+  CheckinTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-checkin-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: checkin-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/checkin-service:latest
+          Environment:
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_CHECKIN_TABLE
+              Value: "AeroLink-Checkins"
+            - Name: BOOKING_HOST
+              Value: !ImportValue 
+                'Fn::Sub': '${EnvironmentName}-ALBDNSName'
+            - Name: BOOKING_PORT
+              Value: "80"
+            - Name: BAGGAGE_HOST
+              Value: !ImportValue 
+                'Fn::Sub': '${EnvironmentName}-ALBDNSName'
+            - Name: BAGGAGE_PORT
+              Value: "80"
+          PortMappings:
+            - ContainerPort: 3003
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-checkin
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  CheckinLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-checkin
+      RetentionInDays: 7
+
+  CheckinService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: checkin-service
+      TaskDefinition: !Ref CheckinTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: checkin-container
+          ContainerPort: 3003
+          TargetGroupArn: !Ref CheckinTargetGroup
+
+  # =========================================================
+  # Baggage Service Resources
+  # =========================================================
+  
+  BaggageTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-baggage-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 3002
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  BaggageListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 30
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/baggage*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref BaggageTargetGroup
+
+  BaggageTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-baggage-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: baggage-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/baggage-service:latest
+          Environment:
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_BAGGAGE_TABLE
+              Value: "AeroLink-Baggage"
+          PortMappings:
+            - ContainerPort: 3002
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-baggage
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  BaggageLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-baggage
+      RetentionInDays: 7
+
+  BaggageService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: baggage-service
+      TaskDefinition: !Ref BaggageTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: baggage-container
+          ContainerPort: 3002
+          TargetGroupArn: !Ref BaggageTargetGroup
+
+  # =========================================================
+  # Flight Ops Service Resources
+  # =========================================================
+  
+  FlightOpsTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-flightops-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 3004
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  FlightOpsListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 5
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/flights/schedule*
+            - /api/flights/pricing*
+            - /api/flights/update-status*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FlightOpsTargetGroup
+
+  FlightOpsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-flightops-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: flightops-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/flight-ops:latest
+          Environment:
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_FLIGHTOPS_TABLE
+              Value: "AeroLink-FlightOps"
+            - Name: BOOKING_HOST
+              Value: !ImportValue 
+                'Fn::Sub': '${EnvironmentName}-ALBDNSName'
+            - Name: BOOKING_PORT
+              Value: "80"
+          PortMappings:
+            - ContainerPort: 3004
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-flightops
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  FlightOpsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-flightops
+      RetentionInDays: 7
+
+  FlightOpsService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: flightops-service
+      TaskDefinition: !Ref FlightOpsTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: flightops-container
+          ContainerPort: 3004
+          TargetGroupArn: !Ref FlightOpsTargetGroup
+
+  # ---------------------------------------------------------
+  # Auth Service Target Group, Listener Rule & ECS Task
+  # ---------------------------------------------------------
+  AuthTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-auth-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 4005
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  AuthListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 2
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/auth*
+            - /auth*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthTargetGroup
+
+  AuthTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-auth-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: auth-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/auth-service:latest
+          PortMappings:
+            - ContainerPort: 4005
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-auth
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  AuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-auth
+      RetentionInDays: 7
+
+  AuthService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: auth-service
+      TaskDefinition: !Ref AuthTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: auth-container
+          ContainerPort: 4005
+          TargetGroupArn: !Ref AuthTargetGroup
+  # ---------------------------------------------------------
+  # Payment Service Target Group, Listener Rule & ECS Task
+  # ---------------------------------------------------------
+  PaymentTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-payment-tg
+      VpcId: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-VpcId'
+      Port: 3004
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  PaymentListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 6
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/payments*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref PaymentTargetGroup
+
+  PaymentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-payment-task
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: payment-container
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/aerolink/payment-service:latest
+          PortMappings:
+            - ContainerPort: 3004
+              Protocol: tcp
+          Environment:
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_PAYMENTS_TABLE
+              Value: "AeroLink-Payments"
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub /ecs/${EnvironmentName}-payment
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  PaymentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-payment
+      RetentionInDays: 7
+
+  PaymentService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !ImportValue 
+        'Fn::Sub': '${EnvironmentName}-ECSClusterName'
+      ServiceName: payment-service
+      TaskDefinition: !Ref PaymentTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az1-id'
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-private-az2-id'
+          SecurityGroups:
+            - !ImportValue 
+              'Fn::Sub': '${EnvironmentName}-ECSTaskSecurityGroup'
+      LoadBalancers:
+        - ContainerName: payment-container
+          ContainerPort: 3004
+          TargetGroupArn: !Ref PaymentTargetGroup

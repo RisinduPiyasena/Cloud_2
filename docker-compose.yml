@@ -1,0 +1,146 @@
+networks:
+  aerolink-net:
+    driver: bridge
+
+services:
+
+  # ── Auth Service (port 4005) ─────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: aerolink-auth
+    ports:
+      - "4005:4005"
+    environment:
+      JWT_SECRET: "AeroLinkSecureKey2026!"
+      AUTH_PORT:  "4005"
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4005/health', r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ const j=JSON.parse(d); process.exit(j.status==='ok'?0:1); }); }).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Booking Service (port 3001) ──────────────────────────────────────────────
+  booking-service:
+    build:
+      context: ./booking-service
+      dockerfile: Dockerfile
+    container_name: aerolink-booking
+    ports:
+      - "3001:3001"
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Baggage Service (port 3002) ──────────────────────────────────────────────
+  baggage-service:
+    build:
+      context: ./baggage-service
+      dockerfile: Dockerfile
+    container_name: aerolink-baggage
+    ports:
+      - "3002:3002"
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/api/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Check-In Service (port 3003) ─────────────────────────────────────────────
+  checkin-service:
+    build:
+      context: ./checkin-service
+      dockerfile: Dockerfile
+    container_name: aerolink-checkin
+    ports:
+      - "3003:3003"
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3003/api/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Flight Ops Service (port 3004) ───────────────────────────────────────────
+  flight-ops-service:
+    build:
+      context: ./flight-ops-service
+      dockerfile: Dockerfile
+    container_name: aerolink-flight-ops
+    ports:
+      - "3004:3004"
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+    environment:
+      BOOKING_HOST: "booking-service"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3004/api/health', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── API Gateway (port 3000) ──────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: aerolink-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      JWT_SECRET:   "AeroLinkSecureKey2026!"
+      AUTH_HOST:    "auth-service"
+      BOOKING_HOST: "booking-service"
+      BAGGAGE_HOST: "baggage-service"
+      CHECKIN_HOST: "checkin-service"
+      FLIGHTS_HOST: "flight-ops-service"
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      booking-service:
+        condition: service_healthy
+      baggage-service:
+        condition: service_healthy
+      checkin-service:
+        condition: service_healthy
+      flight-ops-service:
+        condition: service_healthy
+    networks:
+      - aerolink-net
+    restart: unless-stopped
+
+  # ── Frontend / Vite dev server (port 5173) ───────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aerolink-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_GATEWAY_HOST: "http://api-gateway:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - aerolink-net
+    restart: unless-stopped
